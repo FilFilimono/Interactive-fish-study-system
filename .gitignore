@@ -8,4 +8,4 @@ data/
 .venv
 cv/segment-anything-2
 *pt
-*db
+*.db
