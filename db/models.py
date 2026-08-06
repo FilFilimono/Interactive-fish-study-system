@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Text
 from datetime import datetime
-from database import Base
+from db.database import Base
 
 class DetectionResult(Base):
     __tablename__ = "detection_results" 
