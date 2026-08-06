@@ -91,22 +91,38 @@ def process_image_segmentation(image_path: str, points_str: str):
 
     image_bgr = cv2.imread(image_path)
     h, w, _ = image_bgr.shape
-    try:
-        if points_str:
-            points_data = json.loads(points_str)
-            input_points = np.array(points_data["coords"], dtype=np.float32)
-            input_labels = np.array(points_data["labels"], dtype=np.int32)
-        else:
-            input_points, input_labels = np.array([[w//2, h//2]], dtype=np.float32), np.array([1], dtype=np.int32)
-    except:
-        input_points, input_labels = np.array([[w//2, h//2]], dtype=np.float32), np.array([1], dtype=np.int32)
-
     image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-    
     sam_img_predictor.set_image(image_rgb)
-    masks, _, _ = sam_img_predictor.predict(point_coords=input_points, point_labels=input_labels, multimask_output=False)
-    best_mask = masks[0].squeeze().astype(bool)
     
+    try:
+        if points_str and points_str.strip() not in ["", "None", "null"]:
+            points_data = json.loads(points_str)
+            if len(points_data["coords"]) > 0:
+                input_points = np.array(points_data["coords"], dtype=np.float32)
+                raw_labels = np.array(points_data["labels"], dtype=np.int32)
+                
+                if 2 in raw_labels or 3 in raw_labels:
+                    box_idx = np.where((raw_labels == 2) | (raw_labels == 3))[0]
+                    box_coords = input_points[box_idx].reshape(-1)
+                    masks, _, _ = sam_img_predictor.predict(box=box_coords, multimask_output=False)
+                else:
+                    input_labels = np.where(raw_labels == 1, 1, 0).astype(np.int32)
+                    masks, _, _ = sam_img_predictor.predict(point_coords=input_points, point_labels=input_labels, multimask_output=False)
+            else:
+                input_points = np.array([[w//2, h//2]], dtype=np.float32)
+                input_labels = np.array([1], dtype=np.int32)
+                masks, _, _ = sam_img_predictor.predict(point_coords=input_points, point_labels=input_labels, multimask_output=False)
+        else:
+            input_points = np.array([[w//2, h//2]], dtype=np.float32)
+            input_labels = np.array([1], dtype=np.int32)
+            masks, _, _ = sam_img_predictor.predict(point_coords=input_points, point_labels=input_labels, multimask_output=False)
+    except Exception as e:
+        print("Ошибка SAM2 Image:", e)
+        input_points = np.array([[w//2, h//2]], dtype=np.float32)
+        input_labels = np.array([1], dtype=np.int32)
+        masks, _, _ = sam_img_predictor.predict(point_coords=input_points, point_labels=input_labels, multimask_output=False)
+        
+    best_mask = masks[0].squeeze().astype(bool)
     black_bg = np.zeros_like(image_rgb)
     black_bg[best_mask] = image_rgb[best_mask]
     
@@ -192,51 +208,81 @@ def process_video_tracking(video_path: str):
 def process_video_segmentation(video_path: str, points_str: str):
     if not sam_vid_predictor or not yolo_model: 
         raise RuntimeError("SAM2 Video или YOLO не загружены.")
+    
     video_name = os.path.splitext(os.path.basename(video_path))[0]
+    
     frames_dir = os.path.join(OUTPUT_DET_DIR, f"frames_{video_name}")
     os.makedirs(frames_dir, exist_ok=True)
     
     cap = cv2.VideoCapture(video_path)
     fps = int(cap.get(cv2.CAP_PROP_FPS))
-    width, height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     
+    max_frames = 30 
     frame_idx = 0
-    while cap.isOpened():
+    
+    while cap.isOpened() and frame_idx < max_frames:
         ret, frame = cap.read()
         if not ret: break
         cv2.imwrite(os.path.join(frames_dir, f"{frame_idx:05d}.jpg"), frame)
         frame_idx += 1
     cap.release()
     
-    try:
-        if points_str:
-            points_data = json.loads(points_str)
-            input_points = np.array(points_data["coords"], dtype=np.float32)
-            input_labels = np.array(points_data["labels"], dtype=np.int32)
-        else:
-            input_points, input_labels = np.array([[width//2, height//2]], dtype=np.float32), np.array([1], dtype=np.int32)
-    except:
-        input_points, input_labels = np.array([[width//2, height//2]], dtype=np.float32), np.array([1], dtype=np.int32)
-
     inference_state = sam_vid_predictor.init_state(video_path=frames_dir)
     sam_vid_predictor.reset_state(inference_state)
-    sam_vid_predictor.add_new_points_or_box(
-        inference_state=inference_state,
-        frame_idx=0,
-        obj_id=1,
-        points=input_points,
-        labels=input_labels
-    )
+
+    try:
+        if points_str and points_str.strip() not in ["", "None", "null"]:
+            points_data = json.loads(points_str)
+            if len(points_data["coords"]) > 0:
+                input_points = np.array(points_data["coords"], dtype=np.float32)
+                raw_labels = np.array(points_data["labels"], dtype=np.int32)
+                
+                if 2 in raw_labels or 3 in raw_labels:
+                    box_idx = np.where((raw_labels == 2) | (raw_labels == 3))[0]
+                    box_coords = input_points[box_idx].reshape(-1)
+                    sam_vid_predictor.add_new_points_or_box(
+                        inference_state=inference_state,
+                        frame_idx=0,
+                        obj_id=1,
+                        box=box_coords
+                    )
+                else:
+                    input_labels = np.where(raw_labels == 1, 1, 0).astype(np.int32)
+                    sam_vid_predictor.add_new_points_or_box(
+                        inference_state=inference_state,
+                        frame_idx=0,
+                        obj_id=1,
+                        points=input_points,
+                        labels=input_labels
+                    )
+            else:
+                input_points = np.array([[width//2, height//2]], dtype=np.float32)
+                input_labels = np.array([1], dtype=np.int32)
+                sam_vid_predictor.add_new_points_or_box(inference_state=inference_state, frame_idx=0, obj_id=1, points=input_points, labels=input_labels)
+        else:
+            input_points = np.array([[width//2, height//2]], dtype=np.float32)
+            input_labels = np.array([1], dtype=np.int32)
+            sam_vid_predictor.add_new_points_or_box(inference_state=inference_state, frame_idx=0, obj_id=1, points=input_points, labels=input_labels)
+    except Exception as e:
+        print("Ошибка парсинга точек/рамок:", e)
+        input_points = np.array([[width//2, height//2]], dtype=np.float32)
+        input_labels = np.array([1], dtype=np.int32)
+        sam_vid_predictor.add_new_points_or_box(inference_state=inference_state, frame_idx=0, obj_id=1, points=input_points, labels=input_labels)
     
     video_segments = {}
     for out_frame_idx, out_obj_ids, out_mask_logits in sam_vid_predictor.propagate_in_video(inference_state):
-        video_segments[out_frame_idx] = (out_mask_logits[0] > 0.0).cpu().numpy().squeeze()
+        mask = (out_mask_logits[0] > 0.0).cpu().numpy().squeeze()
+        if mask.ndim == 2:
+            video_segments[out_frame_idx] = mask
+        elif mask.ndim == 3:
+            video_segments[out_frame_idx] = mask[0]
         
     output_video_path = os.path.join(OUTPUT_DET_DIR, f"{video_name}_sam2_vid.mp4")
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
     
-
     for f_idx in range(frame_idx):
         frame = cv2.imread(os.path.join(frames_dir, f"{f_idx:05d}.jpg"))
         mask = video_segments.get(f_idx, np.zeros((height, width), dtype=bool))
@@ -248,8 +294,7 @@ def process_video_segmentation(video_path: str, points_str: str):
     out.release()
     shutil.rmtree(frames_dir, ignore_errors=True)
     
-
-    results = yolo_model.predict(source=output_video_path, conf=0.2, iou=0.5, agnostic_nms=True, stream=True, verbose=False)
+    results = yolo_model.predict(source=video_path, conf=0.2, iou=0.5, agnostic_nms=True, stream=True, verbose=False)
     
     class_stats = defaultdict(int)
     json_data = {"video": video_name, "frames": []}
