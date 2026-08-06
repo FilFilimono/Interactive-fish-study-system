@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 import gradio as gr
 
 from api.routes.router import router as api_router
-from frontend.app import app as gradio_ui
+from ui.app import app as gradio_ui
 
 app = FastAPI(
     title="Interactive Fish Study API",
