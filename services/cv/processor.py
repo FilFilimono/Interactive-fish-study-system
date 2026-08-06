@@ -9,7 +9,6 @@ from PIL import Image
 from collections import defaultdict
 from ultralytics import YOLO
 
-
 from fastai.vision.learner import create_vision_model
 from fastai.vision.all import resnet50
 from sam2.build_sam import build_sam2, build_sam2_video_predictor
@@ -25,7 +24,7 @@ device = "mps" if torch.backends.mps.is_available() else "cpu"
 try:
     yolo_model = YOLO(os.path.join(MODELS_DIR, 'best_fish_yolo.pt'))
 except Exception as e:
-    print(f"ошибка загрузки YOLO: {e}")
+    print(f"Ошибка загрузки YOLO: {e}")
     yolo_model = None
 
 try:
@@ -41,7 +40,7 @@ try:
         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 except Exception as e:
-    print(f"ошибка загрузки ResNet: {e}")
+    print(f"Ошибка загрузки ResNet: {e}")
     resnet_model = None
 
 try:
@@ -53,7 +52,7 @@ try:
     
     sam_vid_predictor = build_sam2_video_predictor(sam2_cfg, sam2_checkpoint, device=device)
 except Exception as e:
-    print(f"ошибка загрузки SAM2: {e}")
+    print(f"Ошибка загрузки SAM2: {e}")
     sam_img_predictor = None
     sam_vid_predictor = None
 
@@ -69,7 +68,7 @@ def process_image_detection(image_path: str):
     image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
     black_bg_main = np.zeros_like(image_rgb)
     
-    best_conf, best_class = 0.0, "Unknown"
+    unique_classes = set()
 
     if results[0].boxes is not None:
         for box in results[0].boxes:
@@ -77,15 +76,15 @@ def process_image_detection(image_path: str):
             conf = float(box.conf[0])
             cls_name = yolo_model.names[int(box.cls[0])]
             
-            if conf > best_conf:
-                best_conf, best_class = conf, cls_name
+            unique_classes.add(cls_name)
 
             black_bg_main[y1:y2, x1:x2] = image_rgb[y1:y2, x1:x2]
             cv2.rectangle(black_bg_main, (x1, y1), (x2, y2), (0, 255, 0), 2)
             cv2.putText(black_bg_main, f"{cls_name} {conf:.2f}", (x1, max(10, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
     cv2.imwrite(output_image_path, cv2.cvtColor(black_bg_main, cv2.COLOR_RGB2BGR))
-    return output_image_path, best_class, round(best_conf, 2)
+    final_classes = ", ".join(unique_classes) if unique_classes else "Unknown"
+    return output_image_path, final_classes, 1.0
 
 def process_image_segmentation(image_path: str, points_str: str):
     if not sam_img_predictor or not resnet_model: raise RuntimeError("SAM2/ResNet не загружены.")
@@ -145,46 +144,49 @@ def process_video_tracking(video_path: str):
 
     cap = cv2.VideoCapture(video_path)
     width, height, fps = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)), int(cap.get(cv2.CAP_PROP_FPS))
+    cap.release()
     
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
     
-    class_stats = defaultdict(lambda: {"count": 0, "max_conf": 0.0})
+    class_stats = defaultdict(int)
+    json_data = {"video": video_name, "frames": []}
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret: break
-        
-        results = yolo_model.track(frame, conf=0.45, iou=0.5, agnostic_nms=True, tracker="botsort.yaml", persist=True, verbose=False)
-        black_bg_video = np.zeros_like(frame)
-        
-        if results[0].boxes is not None:
-            for box in results[0].boxes:
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
+    results = yolo_model.track(source=video_path, conf=0.45, iou=0.5, agnostic_nms=True, tracker="botsort.yaml", stream=True, verbose=False)
+
+    for f_idx, r in enumerate(results):
+        frame_data = {"frame_index": f_idx, "detections": []}
+        if r.boxes is not None:
+            for box in r.boxes:
                 conf = float(box.conf[0])
                 cls_name = yolo_model.names[int(box.cls[0])]
+                x1, y1, x2, y2 = map(float, box.xyxy[0])
+                id_val = int(box.id[0]) if box.id is not None else -1
                 
-                class_stats[cls_name]["count"] += 1
-                if conf > class_stats[cls_name]["max_conf"]:
-                    class_stats[cls_name]["max_conf"] = conf
-                    
-                black_bg_video[y1:y2, x1:x2] = frame[y1:y2, x1:x2]
-                cv2.rectangle(black_bg_video, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(black_bg_video, f"{cls_name} {conf:.2f}", (x1, max(10, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                
-        out.write(black_bg_video)
+                class_stats[cls_name] += 1
+                frame_data["detections"].append({
+                    "id": id_val,
+                    "class": cls_name,
+                    "confidence": round(conf, 2),
+                    "bbox": [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)]
+                })
 
-    cap.release()
+        json_data["frames"].append(frame_data)
+        out.write(r.plot()) 
+
     out.release()
     
-    best_class, best_conf, max_count = "Unknown", 0.0, 0
-    for cls_name, stats in class_stats.items():
-        if stats["count"] > max_count:
-            max_count = stats["count"]
-            best_class = cls_name
-            best_conf = stats["max_conf"]
+    json_path = os.path.join(OUTPUT_DET_DIR, f"{video_name}_yolo_track.json")
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(json_data, f, ensure_ascii=False, indent=4)
+    
+    valid_classes = [cls_name for cls_name, count in class_stats.items() if count > 3]
+    if not valid_classes and class_stats:
+        valid_classes = list(class_stats.keys())
             
-    return output_video_path, best_class, round(best_conf, 2)
+    final_classes = ", ".join(valid_classes) if valid_classes else "Unknown"
+            
+    return output_video_path, final_classes, 1.0
 
 
 def process_video_segmentation(video_path: str, points_str: str):
@@ -234,54 +236,69 @@ def process_video_segmentation(video_path: str, points_str: str):
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
     
-    class_stats = defaultdict(lambda: {"count": 0, "max_conf": 0.0})
-    
+
     for f_idx in range(frame_idx):
         frame = cv2.imread(os.path.join(frames_dir, f"{f_idx:05d}.jpg"))
         mask = video_segments.get(f_idx, np.zeros((height, width), dtype=bool))
         
         black_bg = np.zeros_like(frame)
         black_bg[mask] = frame[mask]
-        
-        results = yolo_model.predict(black_bg, conf=0.3, iou=0.5, agnostic_nms=True, verbose=False)
-        if results[0].boxes is not None:
-            for box in results[0].boxes:
-                conf = float(box.conf[0])
-                cls_name = yolo_model.names[int(box.cls[0])]
-                class_stats[cls_name]["count"] += 1
-                if conf > class_stats[cls_name]["max_conf"]:
-                    class_stats[cls_name]["max_conf"] = conf
-        
         out.write(black_bg)
         
     out.release()
     shutil.rmtree(frames_dir, ignore_errors=True)
     
-    best_class, best_conf, max_count = "Unknown", 0.0, 0
-    for cls_name, stats in class_stats.items():
-        if stats["count"] > max_count:
-            max_count = stats["count"]
-            best_class = cls_name
-            best_conf = stats["max_conf"]
+
+    results = yolo_model.predict(source=output_video_path, conf=0.2, iou=0.5, agnostic_nms=True, stream=True, verbose=False)
+    
+    class_stats = defaultdict(int)
+    json_data = {"video": video_name, "frames": []}
+    
+    for f_idx, r in enumerate(results):
+        frame_data = {"frame_index": f_idx, "detections": []}
+        if r.boxes is not None:
+            for box in r.boxes:
+                conf = float(box.conf[0])
+                cls_name = yolo_model.names[int(box.cls[0])]
+                x1, y1, x2, y2 = map(float, box.xyxy[0])
+                
+                class_stats[cls_name] += 1
+                frame_data["detections"].append({
+                    "class": cls_name,
+                    "confidence": round(conf, 2),
+                    "bbox": [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)]
+                })
+                
+        json_data["frames"].append(frame_data)
             
-    return output_video_path, best_class, round(best_conf, 2)
+    json_path = os.path.join(OUTPUT_DET_DIR, f"{video_name}_sam2_yolo.json")
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(json_data, f, ensure_ascii=False, indent=4)
+        
+    valid_classes = [cls_name for cls_name, count in class_stats.items() if count > 3]
+    if not valid_classes and class_stats:
+        valid_classes = list(class_stats.keys())
+            
+    final_classes = ", ".join(valid_classes) if valid_classes else "Unknown"
+            
+    return output_video_path, final_classes, 1.0
 
 def run_cv_task(file_path: str, mode: str, points: str = None):
     if mode == "detection_img":
-        print(f"запуск YOLO Детекции (Фото): {file_path}")
+        print(f"Запуск YOLO Детекции (Фото): {file_path}")
         return process_image_detection(file_path)
         
     elif mode == "segmentation_img":
-        print(f"запуск SAM 2 + ResNet классификации (Фото): {file_path}")
+        print(f"Запуск SAM 2 + ResNet (Фото): {file_path}")
         return process_image_segmentation(file_path, points)
         
     elif mode == "tracking_video":
-        print(f"запуск YOLO трекинга (видос): {file_path}")
+        print(f"Запуск YOLO трекинга (Видео): {file_path}")
         return process_video_tracking(file_path)
         
     elif mode == "segmentation_video":
-        print(f"запуск SAM 2 Video + скрытая YOLO (видос): {file_path}")
+        print(f"Запуск SAM 2 Video (Видео): {file_path}")
         return process_video_segmentation(file_path, points)
         
     else:
-        raise ValueError(f"неизвестный режим: '{mode}'")
+        raise ValueError(f"Неизвестный режим: '{mode}'")
