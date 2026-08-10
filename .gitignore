@@ -9,3 +9,4 @@ data/
 cv/segment-anything-2
 *pt
 *.db
+commands.txt
