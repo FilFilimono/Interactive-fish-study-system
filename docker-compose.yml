@@ -1,13 +1,34 @@
+version: "3.8"
+
 services:
-  app:
+  cv:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: fish_study_app
+      dockerfile: Dockerfile.cv
+    container_name: fish_cv
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./services/cv:/app/services/cv
+      - ./cv_server.py:/app/cv_server.py
+      - ./data/models:/app/data/models
+      - ./data/output:/app/data/output
+    environment:
+      - MODELS_DIR=/app/data/models
+    restart: unless-stopped
+
+  nlp:
+    build:
+      context: .
+      dockerfile: Dockerfile.nlp
+    container_name: fish_nlp
     ports:
       - "8000:8000"
     volumes:
-      - ./data:/app/data
+      - .:/app
+      - ./data/output:/app/data/output
     environment:
-      - GROQ_API_KEY=${GROQ_API_KEY}
+      - CV_URL=http://cv:8001
+    depends_on:
+      - cv
     restart: unless-stopped
