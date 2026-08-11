@@ -7,7 +7,8 @@ import numpy as np
 from PIL import Image
 from gradio_image_prompter import ImagePrompter
 
-API_BASE_URL = "http://127.0.0.1:8000"
+API_BASE_URL = os.getenv("NLP_URL", "http://nlp:8000")
+PUBLIC_API_URL = os.getenv("PUBLIC_NLP_URL", "http://localhost:8000")
 PROCESS_URL = f"{API_BASE_URL}/api/process_media"
 CHAT_URL = f"{API_BASE_URL}/api/chat"
 
@@ -80,7 +81,7 @@ def process_data(media_type, img_data, vid_path, vid_seg, img_mode, vid_mode):
 
         result = response.json()
         session_id = result["session_id"]
-        media_url = f"{API_BASE_URL}{result['processed_media_url']}"
+        media_url = f"{PUBLIC_API_URL}{result['processed_media_url']}"
         
         llm_reply = result["initial_llm_reply"] + "\n\n***\n💬 *Задай любые другие вопросы в чате ниже!*"
 
@@ -194,3 +195,6 @@ with gr.Blocks(title="Interactive Fish Study System", delete_cache=(3600, 3600))
 
     msg_input.submit(fn=chat_with_bot, inputs=[msg_input, chatbot, session_state], outputs=[msg_input, chatbot])
     send_btn.click(fn=chat_with_bot, inputs=[msg_input, chatbot, session_state], outputs=[msg_input, chatbot])
+    
+    if __name__ == "__main__":
+        app.launch(server_name="0.0.0.0", server_port=7860)

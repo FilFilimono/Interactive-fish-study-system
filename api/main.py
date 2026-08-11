@@ -2,10 +2,10 @@ import os
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-import gradio as gr
+
 
 from api.routes.router import router as api_router
-from ui.app import app as gradio_ui
+
 
 app = FastAPI(
     title="Interactive Fish Study API",
@@ -28,4 +28,3 @@ def health_check():
         media_type="application/json; charset=utf-8"
     )
     
-app = gr.mount_gradio_app(app, gradio_ui, path="/")
