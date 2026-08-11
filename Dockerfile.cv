@@ -9,15 +9,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
-     torch==2.12.1 torchvision==0.27.1
+# Устанавливаем PyTorch с повторными попытками (до 5 раз) и увеличенным таймаутом
+ENV PIP_DEFAULT_TIMEOUT=1000
+RUN pip install --no-cache-dir --retries 5 --index-url https://download.pytorch.org/whl/cpu \
+    torch==2.12.1 torchvision==0.27.1
 
 COPY requirements-cv.txt .
 
 ENV SAM2_BUILD_CUDA=0
 
-RUN pip install --no-cache-dir --no-build-isolation -r requirements-cv.txt
+# Основные зависимости тоже с повторными попытками
+RUN pip install --no-cache-dir --retries 5 --no-build-isolation -r requirements-cv.txt
 
 COPY services/cv/ ./services/cv/
 COPY cv_server.py .

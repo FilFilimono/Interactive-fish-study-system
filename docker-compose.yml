@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   cv:
     build:
@@ -31,4 +29,18 @@ services:
       - CV_URL=http://cv:8001
     depends_on:
       - cv
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    container_name: fish_ui
+    ports:
+      - "7860:7860"
+    environment:
+      - NLP_URL=http://nlp:8000
+      - PUBLIC_NLP_URL=http://localhost:8000
+    depends_on:
+      - nlp
     restart: unless-stopped
