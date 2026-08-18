@@ -1,0 +1,46 @@
+services:
+  cv:
+    build:
+      context: .
+      dockerfile: Dockerfile.cv
+    container_name: fish_cv
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./services/cv:/app/services/cv
+      - ./cv_server.py:/app/cv_server.py
+      - ./data/models:/app/data/models
+      - ./data/output:/app/data/output
+    environment:
+      - MODELS_DIR=/app/data/models
+    restart: unless-stopped
+
+  nlp:
+    build:
+      context: .
+      dockerfile: Dockerfile.nlp
+    container_name: fish_nlp
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - ./data/output:/app/data/output
+    environment:
+      - CV_URL=http://cv:8001
+    depends_on:
+      - cv
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    container_name: fish_ui
+    ports:
+      - "7860:7860"
+    environment:
+      - NLP_URL=http://nlp:8000
+      - PUBLIC_NLP_URL=http://localhost:8000
+    depends_on:
+      - nlp
+    restart: unless-stopped

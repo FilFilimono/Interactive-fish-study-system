@@ -3,3 +3,10 @@ __pycache__/
 .vscode/
 .DS_Store
 .env
+tmp/
+data/
+.venv
+cv/segment-anything-2
+*pt
+*.db
+commands.txt
